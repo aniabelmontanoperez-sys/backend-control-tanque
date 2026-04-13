@@ -1,6 +1,8 @@
 // server.js - Sistema de Control de Tanque
 // Versión para despliegue en la nube (Render, Railway, etc.)
 // Con altura configurable y porcentaje
+const dns = require('dns');
+dns.setServers(['8.8.8.8', '1.1.1.1']); // Fuerza el uso de DNS de Google y Cloudflare
 
 const express = require('express');
 const http = require('http');
@@ -16,7 +18,7 @@ const server = http.createServer(app);
 // Reemplaza con la URL de tu frontend cuando la tengas
 const allowedOrigins = [
   'http://localhost:3000',           // Desarrollo local
-  'https://tu-frontend.netlify.app', // <--- CAMBIA ESTO por tu URL de Netlify
+  'https://control-nivel-tanque.netlify.app', // <--- CAMBIA ESTO por tu URL de Netlify
   process.env.FRONTEND_URL           // Opcional: usar variable de entorno
 ];
 
