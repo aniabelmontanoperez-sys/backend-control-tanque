@@ -1,4 +1,25 @@
+# Dependencias
 node_modules/
+
+# Expo
+.expo/
+
+# Frontend builds (si están dentro del backend por error)
+build/
+dist/
+
+# Variables de entorno
 .env
+.env.local
+
+# Archivos de sistema
 .DS_Store
+Thumbs.db
+
+# Logs
 *.log
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
