@@ -1,4 +1,4 @@
-// server.js - Sistema de Control de Tanque
+// index.js - Sistema de Control de Tanque
 // Versión con autenticación de usuarios y múltiples dispositivos
 
 const express = require('express');
@@ -10,7 +10,6 @@ require('dotenv').config();
 
 // ==================== IMPORTACIONES PARA AUTENTICACIÓN ====================
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
 const User = require('./models/User');
 const Device = require('./models/Device');
 const auth = require('./middleware/auth');
@@ -45,7 +44,6 @@ const JWT_SECRET = process.env.JWT_SECRET || 'mi_secreto_super_seguro_para_tesis
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/watertank';
 
 // ==================== MODELO DE DATOS (legacy) ====================
-// Se mantiene por compatibilidad, pero ahora se usan los modelos User y Device
 const TankDataSchema = new mongoose.Schema({
   level: Number,
   distance: Number,
@@ -71,39 +69,39 @@ if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_BOT_TOKEN !== '') {
   bot.command('start', (ctx) => {
     ctx.reply('🤖 Bienvenido al Sistema de Control de Tanque\n\n' +
       'Comandos disponibles:\n' +
-      '/status - Ver estado actual\n' +
-      '/history - Ver últimas 5 lecturas\n' +
-      '/help - Ver ayuda');
+      '/status - Ver estado de tus dispositivos\n' +
+      '/help - Ver ayuda\n\n' +
+      'Para vincular tu cuenta, usa el código de la página web.');
   });
   
   bot.command('status', async (ctx) => {
-    // Buscar usuario por chatId
     const user = await User.findOne({ telegramChatId: ctx.chat.id.toString() });
     if (!user) {
-      return ctx.reply('❌ No estás registrado. Contacta al administrador.');
+      return ctx.reply('❌ No estás registrado. Vincula tu cuenta desde la página web.');
     }
     
     const devices = await Device.find({ userId: user._id });
     if (devices.length === 0) {
-      return ctx.reply('No tienes dispositivos registrados.');
+      return ctx.reply('📟 No tienes dispositivos registrados.');
     }
     
-    let message = '📊 Estado de tus dispositivos:\n\n';
+    let message = '📊 *Estado de tus dispositivos:*\n\n';
     for (const device of devices) {
-      message += `📟 ${device.name}:\n`;
+      message += `📟 *${device.name}*\n`;
       message += `💧 Nivel: ${Math.round(device.currentStatus.level)}%\n`;
       message += `🔄 Bomba: ${device.currentStatus.pumpStatus ? 'ENCENDIDA' : 'APAGADA'}\n`;
       message += `⬇️ Mínimo: ${device.minLevel}%\n`;
       message += `⬆️ Máximo: ${device.maxLevel}%\n\n`;
     }
-    ctx.reply(message);
+    ctx.reply(message, { parse_mode: 'Markdown' });
   });
   
   bot.command('help', (ctx) => {
-    ctx.reply('📋 Comandos disponibles:\n\n' +
+    ctx.reply('📋 *Comandos disponibles:*\n\n' +
       '/status - Ver estado de tus dispositivos\n' +
-      '/history - Ver últimas lecturas\n' +
-      '/help - Mostrar esta ayuda');
+      '/help - Mostrar esta ayuda\n\n' +
+      'Para vincular tu cuenta, inicia sesión en la página web y ve a Configuración.',
+      { parse_mode: 'Markdown' });
   });
   
   console.log('✅ Comandos de Telegram disponibles');
@@ -120,7 +118,7 @@ function distanceToPercentage(distanceCm, tankHeightCm) {
   return Math.min(100, Math.max(0, percentage));
 }
 
-// ==================== ENDPOINTS DE AUTENTICACIÓN ====================
+// ==================== ENDPOINTS DE AUTENTICACIÓN (PASO 7) ====================
 
 // Registrar nuevo usuario
 app.post('/api/auth/register', async (req, res) => {
@@ -256,7 +254,7 @@ app.get('/api/status/:deviceId', auth, async (req, res) => {
   }
 });
 
-// Configurar parámetros de un dispositivo
+// Configurar parámetros de un dispositivo (PASO 9)
 app.post('/api/config', auth, async (req, res) => {
   const { deviceId, minLevel, maxLevel, tankHeight } = req.body;
 
@@ -299,7 +297,6 @@ app.get('/api/history/:deviceId', auth, async (req, res) => {
       return res.status(404).json({ error: 'Dispositivo no encontrado' });
     }
 
-    // Devolver las últimas 100 lecturas
     const history = device.readings.slice(-100).reverse();
     res.json(history);
   } catch (error) {
@@ -307,9 +304,8 @@ app.get('/api/history/:deviceId', auth, async (req, res) => {
   }
 });
 
-// ==================== ENDPOINT PARA ESP8266 ====================
+// ==================== ENDPOINT PARA ESP8266 (PASO 8) ====================
 
-// Endpoint para recibir datos del ESP8266
 app.post('/api/data', async (req, res) => {
   const { deviceId, distance, pumpStatus } = req.body;
 
@@ -324,12 +320,13 @@ app.post('/api/data', async (req, res) => {
   try {
     const device = await Device.findOne({ deviceId });
     if (!device) {
-      return res.status(404).json({ error: 'Dispositivo no registrado' });
+      return res.status(404).json({ error: 'Dispositivo no registrado. Regístralo primero en la web.' });
     }
 
     const level = distanceToPercentage(distance, device.tankHeight);
 
     let newPumpStatus = pumpStatus !== undefined ? pumpStatus : device.currentStatus.pumpStatus;
+    
     if (level <= device.minLevel && !newPumpStatus) {
       newPumpStatus = true;
     } else if (level >= device.maxLevel && newPumpStatus) {
@@ -356,40 +353,41 @@ app.post('/api/data', async (req, res) => {
 
     await device.save();
 
-    // Guardar también en colección legacy por compatibilidad
     await TankData.create({
       level: level,
       distance: distance,
       pumpStatus: newPumpStatus
     });
 
-    // Emitir actualización por WebSocket
     io.emit(`status_update_${deviceId}`, device.currentStatus);
 
-    // Enviar alertas por Telegram
     const user = await User.findById(device.userId);
+    
     if (user && user.telegramChatId && bot) {
       if (level <= 15) {
         await bot.telegram.sendMessage(user.telegramChatId,
           `🔴 ALARMA CRÍTICA: Nivel de agua MUY BAJO!\n\n` +
           `📊 Dispositivo: ${device.name}\n` +
-          `📊 Nivel: ${Math.round(level)}%\n` +
-          `🔄 Bomba: ${newPumpStatus ? 'ENCENDIDA' : 'APAGADA'}`
+          `📊 Nivel actual: ${Math.round(level)}%\n` +
+          `🔄 Bomba: ${newPumpStatus ? 'ENCENDIDA' : 'APAGADA'}\n` +
+          `⚠️ Riesgo de bomba seca. Revisa el sistema.`
         );
       } else if (level >= 90) {
         await bot.telegram.sendMessage(user.telegramChatId,
           `🔴 ALARMA CRÍTICA: Tanque casi lleno!\n\n` +
           `📊 Dispositivo: ${device.name}\n` +
-          `📊 Nivel: ${Math.round(level)}%\n` +
-          `🔄 Bomba: ${newPumpStatus ? 'ENCENDIDA' : 'APAGADA'}`
+          `📊 Nivel actual: ${Math.round(level)}%\n` +
+          `🔄 Bomba: ${newPumpStatus ? 'ENCENDIDA' : 'APAGADA'}\n` +
+          `⚠️ Riesgo de desbordamiento. Revisa el sistema.`
         );
       }
     }
 
-    res.json({ success: true, level });
+    res.json({ success: true, level: Math.round(level) });
+
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Error en el servidor' });
+    console.error('Error en /api/data:', error);
+    res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
 
@@ -407,7 +405,6 @@ app.get('/api/history', async (req, res) => {
   }
 });
 
-// Endpoint para simular datos (pruebas)
 app.post('/api/simulate', async (req, res) => {
   const { level, deviceId } = req.body;
   
