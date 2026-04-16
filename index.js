@@ -1,5 +1,5 @@
 // index.js - Sistema de Control de Tanque
-// Versión con autenticación de usuarios y múltiples dispositivos
+// Versión con autenticación JWT y creación automática de dispositivos
 
 const express = require('express');
 const http = require('http');
@@ -18,12 +18,11 @@ const app = express();
 const server = http.createServer(app);
 
 // ==================== CONFIGURACIÓN DE CORS ====================
-
 const allowedOrigins = [
   'http://localhost:3000',
   'https://sistema-nivel-agua.github.io',
-  'https://backend-control-tanque-production-154a.up.railway.app'
-];
+  process.env.FRONTEND_URL
+].filter(Boolean);
 
 const io = socketIo(server, {
   cors: {
@@ -72,7 +71,7 @@ if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_BOT_TOKEN !== '') {
       'Comandos disponibles:\n' +
       '/status - Ver estado de tus dispositivos\n' +
       '/help - Ver ayuda\n\n' +
-      'Para vincular tu cuenta, usa el código de la página web.');
+      'Para vincular tu cuenta, inicia sesión en la página web y ve a Configuración.');
   });
   
   bot.command('status', async (ctx) => {
@@ -119,7 +118,7 @@ function distanceToPercentage(distanceCm, tankHeightCm) {
   return Math.min(100, Math.max(0, percentage));
 }
 
-// ==================== ENDPOINTS DE AUTENTICACIÓN (PASO 7) ====================
+// ==================== ENDPOINTS DE AUTENTICACIÓN ====================
 
 // Registrar nuevo usuario
 app.post('/api/auth/register', async (req, res) => {
@@ -201,7 +200,7 @@ app.post('/api/auth/telegram', auth, async (req, res) => {
 
 // ==================== ENDPOINTS DE DISPOSITIVOS ====================
 
-// Registrar un nuevo dispositivo
+// Registrar un nuevo dispositivo (manual)
 app.post('/api/devices/register', auth, async (req, res) => {
   const { deviceId, name } = req.body;
 
@@ -255,7 +254,7 @@ app.get('/api/status/:deviceId', auth, async (req, res) => {
   }
 });
 
-// Configurar parámetros de un dispositivo (PASO 9)
+// Configurar parámetros de un dispositivo
 app.post('/api/config', auth, async (req, res) => {
   const { deviceId, minLevel, maxLevel, tankHeight } = req.body;
 
@@ -305,7 +304,7 @@ app.get('/api/history/:deviceId', auth, async (req, res) => {
   }
 });
 
-// ==================== ENDPOINT PARA ESP8266 (PASO 8) ====================
+// ==================== ENDPOINT PARA ESP8266 (con creación automática) ====================
 
 app.post('/api/data', async (req, res) => {
   const { deviceId, distance, pumpStatus } = req.body;
@@ -319,13 +318,53 @@ app.post('/api/data', async (req, res) => {
   }
 
   try {
-    const device = await Device.findOne({ deviceId });
+    // Buscar el dispositivo
+    let device = await Device.findOne({ deviceId });
+    
+    // Si no existe, lo creamos automáticamente
     if (!device) {
-      return res.status(404).json({ error: 'Dispositivo no registrado. Regístralo primero en la web.' });
+      console.log(`📟 Nuevo dispositivo detectado: ${deviceId}. Creando automáticamente...`);
+      
+      // Buscar el primer usuario registrado (o el que tenga dispositivos)
+      let defaultUser = await User.findOne();
+      
+      // Si no hay usuarios, crear uno por defecto (solo para desarrollo)
+      if (!defaultUser) {
+        console.log('⚠️ No hay usuarios registrados. Creando usuario por defecto...');
+        defaultUser = new User({
+          username: 'admin',
+          email: 'admin@example.com',
+          password: 'admin123'
+        });
+        await defaultUser.save();
+        console.log('✅ Usuario admin creado con contraseña: admin123');
+      }
+      
+      device = new Device({
+        deviceId: deviceId,
+        name: `Tanque_${deviceId.slice(-6)}`,
+        userId: defaultUser._id,
+        tankHeight: 100,
+        minLevel: 20,
+        maxLevel: 80,
+        currentStatus: {
+          level: 0,
+          distance: 0,
+          pumpStatus: false,
+          lastUpdate: new Date()
+        },
+        readings: []
+      });
+      
+      await device.save();
+      await User.findByIdAndUpdate(defaultUser._id, { $push: { devices: device._id } });
+      console.log(`✅ Dispositivo ${deviceId} creado automáticamente para usuario ${defaultUser.username}`);
     }
 
+    // Calcular nivel usando la altura del tanque del dispositivo
     const level = distanceToPercentage(distance, device.tankHeight);
 
+    // Control automático de bomba
     let newPumpStatus = pumpStatus !== undefined ? pumpStatus : device.currentStatus.pumpStatus;
     
     if (level <= device.minLevel && !newPumpStatus) {
@@ -334,6 +373,7 @@ app.post('/api/data', async (req, res) => {
       newPumpStatus = false;
     }
 
+    // Actualizar estado actual del dispositivo
     device.currentStatus = {
       level,
       distance,
@@ -341,6 +381,7 @@ app.post('/api/data', async (req, res) => {
       lastUpdate: new Date()
     };
 
+    // Guardar lectura en el historial
     device.readings.push({
       level,
       distance,
@@ -348,22 +389,25 @@ app.post('/api/data', async (req, res) => {
       timestamp: new Date()
     });
 
+    // Limitar historial a 500 lecturas
     if (device.readings.length > 500) {
       device.readings = device.readings.slice(-500);
     }
 
     await device.save();
 
+    // Guardar también en colección legacy por compatibilidad
     await TankData.create({
       level: level,
       distance: distance,
       pumpStatus: newPumpStatus
     });
 
+    // Emitir actualización por WebSocket para este dispositivo
     io.emit(`status_update_${deviceId}`, device.currentStatus);
 
+    // Enviar alertas por Telegram
     const user = await User.findById(device.userId);
-    
     if (user && user.telegramChatId && bot) {
       if (level <= 15) {
         await bot.telegram.sendMessage(user.telegramChatId,
@@ -440,6 +484,7 @@ server.listen(PORT, '0.0.0.0', () => {
 ║  💾 MongoDB: ${MONGODB_URI.includes('localhost') ? 'Local' : 'Atlas'}            ║
 ║  🔐 Autenticación: Activa (JWT)                               ║
 ║  🤖 Telegram: ${bot ? 'Activo' : 'No configurado'}                             ║
+║  📟 Auto-registro de dispositivos: Activo                     ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
 });
