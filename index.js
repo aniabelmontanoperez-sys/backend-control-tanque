@@ -18,11 +18,12 @@ const app = express();
 const server = http.createServer(app);
 
 // ==================== CONFIGURACIÓN DE CORS ====================
+
 const allowedOrigins = [
   'http://localhost:3000',
   'https://sistema-nivel-agua.github.io',
-  process.env.FRONTEND_URL
-].filter(Boolean);
+  'https://backend-control-tanque-production-154a.up.railway.app'
+];
 
 const io = socketIo(server, {
   cors: {
