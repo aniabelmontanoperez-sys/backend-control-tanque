@@ -468,6 +468,53 @@ app.post('/api/simulate', async (req, res) => {
   }
 });
 
+// ==================== ENDPOINTS PARA VERIFICACIÓN DE BOMBA ====================
+
+// Endpoint para recibir confirmación de bomba
+app.post('/api/bomba-status', async (req, res) => {
+  const { deviceId, funciono, nivelAntes, nivelDespues } = req.body;
+  
+  console.log(`📟 Dispositivo ${deviceId}: Bomba ${funciono ? 'funcionó ✅' : 'falló ❌'}`);
+  if (nivelAntes && nivelDespues) {
+    console.log(`   Nivel antes: ${nivelAntes}% → Nivel después: ${nivelDespues}%`);
+  }
+  
+  res.json({ success: true });
+});
+
+// Endpoint para recibir alerta de fallo de bomba
+app.post('/api/alerta-fallo-bomba', async (req, res) => {
+  const { deviceId, mensaje, nivelActual } = req.body;
+  
+  console.log(`🚨 ALERTA: ${mensaje}`);
+  console.log(`   Dispositivo: ${deviceId}`);
+  console.log(`   Nivel actual: ${nivelActual}%`);
+  
+  // Buscar el dispositivo y su usuario
+  const device = await Device.findOne({ deviceId });
+  if (device) {
+    const user = await User.findById(device.userId);
+    if (user && user.telegramChatId && bot) {
+      await bot.telegram.sendMessage(user.telegramChatId,
+        `🚨 *ALERTA DE FALLO EN BOMBA*\n\n` +
+        `📟 Dispositivo: ${device.name}\n` +
+        `⚠️ Problema: La bomba no encendió correctamente\n` +
+        `📊 Nivel actual: ${Math.round(nivelActual)}%\n\n` +
+        `*Posibles causas:*\n` +
+        `• Bomba averiada\n` +
+        `• Relé defectuoso\n` +
+        `• Sin suministro eléctrico\n` +
+        `• Cable suelto`,
+        { parse_mode: 'Markdown' }
+      );
+      console.log(`📱 Alerta enviada a Telegram al usuario ${user.username}`);
+    }
+  }
+  
+  res.json({ success: true });
+});
+
+
 // ==================== WEBSOCKET ====================
 io.on('connection', (socket) => {
   console.log('📱 Cliente conectado');
