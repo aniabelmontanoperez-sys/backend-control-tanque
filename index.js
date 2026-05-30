@@ -1,5 +1,5 @@
 // index.js - Sistema de Control de Tanque
-// Versión con autenticación JWT y creación automática de dispositivos
+// Versión con WebSockets configurados para Railway
 
 const express = require('express');
 const http = require('http');
@@ -24,12 +24,17 @@ const allowedOrigins = [
   process.env.FRONTEND_URL
 ].filter(Boolean);
 
+// ==================== CONFIGURACIÓN DE SOCKET.IO PARA WEB SOCKET ====================
 const io = socketIo(server, {
   cors: {
     origin: allowedOrigins,
     methods: ["GET", "POST"],
     credentials: true
-  }
+  },
+  transports: ['websocket', 'polling'],
+  allowEIO3: true,
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
 
 app.use(cors({
@@ -325,10 +330,8 @@ app.post('/api/data', async (req, res) => {
     if (!device) {
       console.log(`📟 Nuevo dispositivo detectado: ${deviceId}. Creando automáticamente...`);
       
-      // Buscar el primer usuario registrado (o el que tenga dispositivos)
       let defaultUser = await User.findOne();
       
-      // Si no hay usuarios, crear uno por defecto (solo para desarrollo)
       if (!defaultUser) {
         console.log('⚠️ No hay usuarios registrados. Creando usuario por defecto...');
         defaultUser = new User({
@@ -470,7 +473,6 @@ app.post('/api/simulate', async (req, res) => {
 
 // ==================== ENDPOINTS PARA VERIFICACIÓN DE BOMBA ====================
 
-// Endpoint para recibir confirmación de bomba
 app.post('/api/bomba-status', async (req, res) => {
   const { deviceId, funciono, nivelAntes, nivelDespues } = req.body;
   
@@ -482,7 +484,6 @@ app.post('/api/bomba-status', async (req, res) => {
   res.json({ success: true });
 });
 
-// Endpoint para recibir alerta de fallo de bomba
 app.post('/api/alerta-fallo-bomba', async (req, res) => {
   const { deviceId, mensaje, nivelActual } = req.body;
   
@@ -490,7 +491,6 @@ app.post('/api/alerta-fallo-bomba', async (req, res) => {
   console.log(`   Dispositivo: ${deviceId}`);
   console.log(`   Nivel actual: ${nivelActual}%`);
   
-  // Buscar el dispositivo y su usuario
   const device = await Device.findOne({ deviceId });
   if (device) {
     const user = await User.findById(device.userId);
@@ -514,10 +514,9 @@ app.post('/api/alerta-fallo-bomba', async (req, res) => {
   res.json({ success: true });
 });
 
-
 // ==================== WEBSOCKET ====================
 io.on('connection', (socket) => {
-  console.log('📱 Cliente conectado');
+  console.log('📱 Cliente conectado por WebSocket');
 });
 
 // ==================== INICIAR SERVIDOR ====================
@@ -531,6 +530,7 @@ server.listen(PORT, '0.0.0.0', () => {
 ║  💾 MongoDB: ${MONGODB_URI.includes('localhost') ? 'Local' : 'Atlas'}            ║
 ║  🔐 Autenticación: Activa (JWT)                               ║
 ║  🤖 Telegram: ${bot ? 'Activo' : 'No configurado'}                             ║
+║  🔌 WebSocket: Activo (transports: websocket, polling)        ║
 ║  📟 Auto-registro de dispositivos: Activo                     ║
 ╚═══════════════════════════════════════════════════════════════╝
   `);
