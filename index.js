@@ -27,14 +27,15 @@ const allowedOrigins = [
 // ==================== CONFIGURACIÓN DE SOCKET.IO PARA WEB SOCKET ====================
 const io = socketIo(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: "https://sistema-nivel-agua.github.io",
     methods: ["GET", "POST"],
     credentials: true
   },
   transports: ['websocket', 'polling'],
   allowEIO3: true,
   pingTimeout: 60000,
-  pingInterval: 25000
+  pingInterval: 25000,
+  wsEngine: 'ws'
 });
 
 app.use(cors({
